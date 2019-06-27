@@ -26,6 +26,17 @@ Usage: import the module (see Jupyter notebooks for examples), or run from
     # Apply color splash to video using the last weights you trained
     python3 balloon.py splash --weights=last --video=<URL or path to file>
 """
+#Normal training (finetuning)
+#CUDA_VISIBLE_DEVICES=1 python ./apple.py test --weights=../../weights/mask_rcnn_coco_0159.h5 --dataset=../../dataset_mask_rcnn/apple/
+
+#For prediction
+#CUDA_VISIBLE_DEVICES=1 python ./apple.py predict --weights=../../logs/apple20190627T1653/mask_rcnn_apple_0030.h5 --image=../../dataset_mask_rcnn/apple/val
+#This will create predicted images under ./predic folder
+
+#For evaluation
+#CUDA_VISIBLE_DEVICES=1 python ./apple.py eval --weights=../../logs/apple20190627T1653/mask_rcnn_apple_0030.h5 --dataset=../../dataset_mask_rcnn/apple/
+
+
 
 import os
 import sys
@@ -33,6 +44,7 @@ import json
 import datetime
 import numpy as np
 import skimage.draw
+import imghdr
 
 # Root directory of the project
 ROOT_DIR = os.path.abspath("../../")
@@ -41,6 +53,7 @@ ROOT_DIR = os.path.abspath("../../")
 sys.path.append(ROOT_DIR)  # To find local version of the library
 from mrcnn.config import Config
 from mrcnn import model as modellib, utils
+from mrcnn import visualize
 
 # Path to trained weights file
 COCO_WEIGHTS_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
@@ -202,6 +215,35 @@ def train(model):
                 epochs=31,#500,#30,
                 layers='heads')
 
+def perform_eval(model,dataset):
+    APs = []
+    for image_id in dataset.image_ids:
+        # Load image
+        image, image_meta, gt_class_id, gt_bbox, gt_mask =\
+            modellib.load_image_gt(dataset, config,
+                                   image_id, use_mini_mask=False)
+        # Run object detection
+        results = model.detect_molded(image[np.newaxis], image_meta[np.newaxis], verbose=0)
+        # Compute AP over range 0.5 to 0.95
+        r = results[0]
+        if r['masks'].shape[-1]>0:
+            ap = utils.compute_ap_range(
+                gt_bbox, gt_class_id, gt_mask,
+                r['rois'], r['class_ids'], r['scores'], r['masks'],
+                verbose=0)
+            APs.append(ap)
+            info = dataset.image_info[image_id]
+            meta = modellib.parse_image_meta(image_meta[np.newaxis,...])
+            print("{:3} {}   AP: {:.2f}".format(
+                meta["image_id"][0], meta["original_image_shape"][0], ap))
+    print("Mean AP overa {} images: {:.4f}".format(len(APs), np.mean(APs)))
+
+def evaluation(model):
+    # Validation dataset
+    dataset_val = AppleDataset()
+    dataset_val.load_apple(args.dataset, "val")
+    dataset_val.prepare()
+    perform_eval(model,dataset_val)
 
 def color_splash(image, mask):
     """Apply color splash effect.
@@ -222,6 +264,57 @@ def color_splash(image, mask):
         splash = gray.astype(np.uint8)
     return splash
 
+def detect_n_save_output(model, image_path=None):
+    # Save output
+    fileCnt=0
+    output_folder='./predic/'
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+        print("Folder does not exist, create at {}".format(output_folder))
+    else:
+        print('Dir exist')
+    class_names=['BG','apple']
+    #Checking for trailing forward slash.
+    if image_path[-1] =='/':
+        pass
+    else:
+        image_path=image_path+'/'
+    #assert image_path
+    totalCnt=len(sorted(os.listdir(image_path)))
+    for filename in sorted(os.listdir(image_path)):
+        #checking for image file
+        file_path=image_path+filename
+        if imghdr.what(file_path)==None: # an image file.
+            print("{} is not an image file".format(file_path))
+            pass
+        else:
+            print("Processing {}".format(file_path))
+            # Read image
+            image = skimage.io.imread(file_path)
+            if image.ndim == 3: #Color image
+                # If has an alpha channel, remove it for consistency
+                if image.shape[-1] == 4:
+                    image = image[..., :3]
+                # Detect objects
+                #print("image.shape=",image.shape)
+                r = model.detect([image], verbose=1)[0]
+                #mask = r['masks']
+                #print("mask.shape=",mask.shape)
+                if r['masks'].shape[-1] > 0: #Only consider when the last shape of mask is greater than 0 (if =0 menas no class instances)
+                    print("Processing {}/{}".format(fileCnt,totalCnt))
+                    fileNameOnly=os.path.splitext(filename)[0]
+                    #output_file_name = image_path+'/'+'predict_'+fileNameOnly+'.png'
+                    output_file_name = output_folder+'predict_'+fileNameOnly+'.png'
+                    visualize.save_instances_as_file(image,output_file_name,r['rois'], r['masks'], r['class_ids'], 
+                            class_names, r['scores'])
+                    print("output_file_name=",output_file_name)
+                    fileCnt=fileCnt+1
+                else: #No class instances
+                    print("No instance, pass this image")
+                    pass
+            else:   #grey image, we could do lie this, but ignore it at  this moment, image = skimage.color.gray2rgb(image)
+                print("Grayscale image detected, passing this since it's not a proper input image (RGB)")
+                pass
 
 def detect_and_color_splash(model, image_path=None, video_path=None):
     assert image_path or video_path
@@ -333,7 +426,8 @@ if __name__ == '__main__':
     if args.command == "train":
         model = modellib.MaskRCNN(mode="training", config=config,
                                   model_dir=args.logs)
-    else:
+    #else:
+    elif args.command == "predict" or args.command == "eval":
         model = modellib.MaskRCNN(mode="inference", config=config,
                                   model_dir=args.logs)
 
@@ -361,14 +455,21 @@ if __name__ == '__main__':
             "mrcnn_class_logits", "mrcnn_bbox_fc",
             "mrcnn_bbox", "mrcnn_mask"])
     else:
-        #model.load_weights(weights_path, by_name=True)
-        model.load_weights(weights_path, by_name=True, exclude=[ "mrcnn_class_logits","mrcnn_bbox_fc", "mrcnn_bbox", "mrcnn_mask"])
+        if args.command == "eval" or "predict":
+            model.load_weights(weights_path, by_name=True)
+        elif args.command == "train":
+            model.load_weights(weights_path, by_name=True, exclude=[ "mrcnn_class_logits", "mrcnn_bbox_fc", "mrcnn_bbox", "mrcnn_mask"])
+            #model.load_weights(weights_path, by_name=True)
     # Train or evaluate
     if args.command == "train":
         train(model)
     elif args.command == "splash":
         detect_and_color_splash(model, image_path=args.image,
                                 video_path=args.video)
+    elif args.command == "predict":
+        detect_n_save_output(model, image_path=args.image)
+    elif args.command == "eval":
+        evaluation(model)
     else:
         print("'{}' is not recognized. "
               "Use 'train' or 'splash'".format(args.command))
