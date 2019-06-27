@@ -1,0 +1,3 @@
+[submodule "dataset_mask_rcnn"]
+	path = dataset_mask_rcnn
+	url = git@github.com:inkyusa/dataset_mask_rcnn.git
