@@ -54,6 +54,7 @@ sys.path.append(ROOT_DIR)  # To find local version of the library
 from mrcnn.config import Config
 from mrcnn import model as modellib, utils
 from mrcnn import visualize
+import imgaug.augmenters as iaa
 
 # Path to trained weights file
 COCO_WEIGHTS_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
@@ -205,6 +206,17 @@ def train(model):
     dataset_val.load_apple(args.dataset, "val")
     dataset_val.prepare()
 
+    augmentation = iaa.Sequential([
+        iaa.Crop(px=(0, 16)), # crop images from each side by 0 to 16px (randomly chosen)
+        iaa.Fliplr(0.5), # horizontally flip 50% of the images
+        iaa.Flipud(0.3), # horizontally flip 50% of the images
+        iaa.GaussianBlur(sigma=(0, 3.0)), # blur images with a sigma of 0 to 3.0
+        iaa.Dropout([0.05,0.1]),
+        iaa.GammaContrast([0.5,1.55]),
+        iaa.ElasticTransformation(alpha=50, sigma=5),
+        iaa.Affine(scale={"x": (0.5, 1.5), "y": (0.5, 1.5)})
+    ])
+
     # *** This training schedule is an example. Update to your needs ***
     # Since we're using a very small dataset, and starting from
     # COCO trained weights, we don't need to train too long. Also,
@@ -212,8 +224,10 @@ def train(model):
     print("Training network heads")
     model.train(dataset_train, dataset_val,
                 learning_rate=config.LEARNING_RATE,
-                epochs=31,#500,#30,
-                layers='heads')
+                epochs=2001,#301,#500,#30,
+                layers='heads',
+                augmentation=augmentation,
+                model_saving_period=100)
 
 def perform_eval(model,dataset):
     APs = []
@@ -306,7 +320,7 @@ def detect_n_save_output(model, image_path=None):
                     #output_file_name = image_path+'/'+'predict_'+fileNameOnly+'.png'
                     output_file_name = output_folder+'predict_'+fileNameOnly+'.png'
                     visualize.save_instances_as_file(image,output_file_name,r['rois'], r['masks'], r['class_ids'], 
-                            class_names, r['scores'])
+                            class_names, r['scores'],show_bbox=True,show_mask=True)
                     print("output_file_name=",output_file_name)
                     fileCnt=fileCnt+1
                 else: #No class instances
@@ -455,7 +469,8 @@ if __name__ == '__main__':
             "mrcnn_class_logits", "mrcnn_bbox_fc",
             "mrcnn_bbox", "mrcnn_mask"])
     else:
-        if args.command == "eval" or "predict":
+        print(args.command)
+        if args.command == "eval" or args.command == "predict":
             model.load_weights(weights_path, by_name=True)
         elif args.command == "train":
             model.load_weights(weights_path, by_name=True, exclude=[ "mrcnn_class_logits", "mrcnn_bbox_fc", "mrcnn_bbox", "mrcnn_mask"])
