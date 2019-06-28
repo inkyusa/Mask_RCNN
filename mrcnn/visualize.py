@@ -252,9 +252,9 @@ def save_instances_as_file(image, output_file_name, boxes, masks, class_ids, cla
             verts = np.fliplr(verts) - 1
             p = Polygon(verts, facecolor="none", edgecolor=color)
             ax.add_patch(p)
-    #ax.imshow(masked_image.astype(np.uint8))
-    #fig.savefig(output_file_name)
-    scipy.misc.toimage(masked_image.astype(np.uint8), cmin=0.0, cmax=1.0).save(output_file_name)
+    ax.imshow(masked_image.astype(np.uint8))
+    fig.savefig(output_file_name)
+    #scipy.misc.toimage(masked_image.astype(np.uint8), cmin=0.0, cmax=1.0).save(output_file_name)
     print("Save {}".format(output_file_name))
     if auto_show:
         plt.show()
